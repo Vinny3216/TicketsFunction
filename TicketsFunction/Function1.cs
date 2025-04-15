@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Azure.Storage.Queues.Models;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
@@ -19,53 +19,78 @@ namespace TicketFunction
         [Function(nameof(Function1))]
         public async Task Run([QueueTrigger("tickethub", Connection = "AzureWebJobsStorage")] QueueMessage message)
         {
-            _logger.LogInformation($"C# Queue trigger function processed: {message.MessageText}");
+            _logger.LogInformation("✅ Function triggered, starting process.");
+
             string messageJson = message.MessageText;
-            
+            _logger.LogInformation($"📨 Received message: {messageJson}");
+
             var options = new JsonSerializerOptions
-            { PropertyNameCaseInsensitive = true };
-
-            var ticket = JsonSerializer.Deserialize<Tickets>(messageJson, options);
-
-            if (ticket == null)
             {
-                _logger.LogError("Failed to deserialize");
+                PropertyNameCaseInsensitive = true
+            };
+
+            Tickets? ticket = null;
+            try
+            {
+                ticket = JsonSerializer.Deserialize<Tickets>(messageJson, options);
+                _logger.LogInformation("✅ Deserialization complete.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ Error during deserialization: {ex.Message}");
+                _logger.LogError($"🔍 Stack trace: {ex.StackTrace}");
                 return;
             }
 
-            _logger.LogInformation($"Tickets: ConcertId={ticket.ConcertId}, Email={ticket.Email}, Name={ticket.Name}, Phone={ticket.Phone}, Quantity={ticket.Quantity}, CreditCard={ticket.CreditCard?.Substring(12, 4) ?? "null"}, Expiration={ticket.Expiration}, SecurityCode=*****, Address={ticket.Address}, City={ticket.City}, Province={ticket.Province}, PostalCode={ticket.PostalCode}, Country={ticket.Country}");
+            if (ticket == null)
+            {
+                _logger.LogError("❌ Ticket is null after deserialization.");
+                return;
+            }
 
-            
+            _logger.LogInformation("✅ Starting DB insert process.");
+
             string? connectionString = Environment.GetEnvironmentVariable("SqlConnectionString");
             if (string.IsNullOrEmpty(connectionString))
             {
-                throw new InvalidOperationException("SQL connection string is not set in the environment variables.");
+                _logger.LogError("❌ SQL connection string is missing.");
+                return;
             }
 
-            using (SqlConnection conn = new SqlConnection(connectionString))
+            try
             {
-                await conn.OpenAsync(); 
-
-                var query = "INSERT INTO dbo.Tickets (ConcertId, Email, Name, Phone, Quantity, CreditCard, Expiration, SecurityCode, Address, City, Province, PostalCode, Country) VALUES (@ConcertId, @Email, @Name, @Phone, @Quantity, @CreditCard, @Expiration, @SecurityCode, @Address, @City, @Province, @PostalCode, @Country)";
-
-                using (SqlCommand cmd = new SqlCommand(query, conn))
+                using (SqlConnection conn = new SqlConnection(connectionString))
                 {
-                    cmd.Parameters.AddWithValue("@ConcertId", ticket.ConcertId);
-                    cmd.Parameters.AddWithValue("@Email", ticket.Email);
-                    cmd.Parameters.AddWithValue("@Name", ticket.Name);
-                    cmd.Parameters.AddWithValue("@Phone", ticket.Phone);
-                    cmd.Parameters.AddWithValue("@Quantity", ticket.Quantity);
-                    cmd.Parameters.AddWithValue("@CreditCard", ticket.CreditCard);
-                    cmd.Parameters.AddWithValue("@Expiration", ticket.Expiration);
-                    cmd.Parameters.AddWithValue("@SecurityCode", ticket.SecurityCode);
-                    cmd.Parameters.AddWithValue("@Address", ticket.Address);
-                    cmd.Parameters.AddWithValue("@City", ticket.City);
-                    cmd.Parameters.AddWithValue("@Province", ticket.Province);
-                    cmd.Parameters.AddWithValue("@PostalCode", ticket.PostalCode);
-                    cmd.Parameters.AddWithValue("@Country", ticket.Country);
+                    await conn.OpenAsync();
+                    _logger.LogInformation("✅ Database connection opened.");
 
-                    await cmd.ExecuteNonQueryAsync();
+                    var query = "INSERT INTO dbo.Tickets (ConcertId, Email, Name, Phone, Quantity, CreditCard, Expiration, SecurityCode, Address, City, Province, PostalCode, Country) VALUES (@ConcertId, @Email, @Name, @Phone, @Quantity, @CreditCard, @Expiration, @SecurityCode, @Address, @City, @Province, @PostalCode, @Country)";
+
+                    using (SqlCommand cmd = new SqlCommand(query, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@ConcertId", ticket.ConcertId);
+                        cmd.Parameters.AddWithValue("@Email", ticket.Email);
+                        cmd.Parameters.AddWithValue("@Name", ticket.Name);
+                        cmd.Parameters.AddWithValue("@Phone", ticket.Phone);
+                        cmd.Parameters.AddWithValue("@Quantity", ticket.Quantity);
+                        cmd.Parameters.AddWithValue("@CreditCard", ticket.CreditCard);
+                        cmd.Parameters.AddWithValue("@Expiration", ticket.Expiration);
+                        cmd.Parameters.AddWithValue("@SecurityCode", ticket.SecurityCode);
+                        cmd.Parameters.AddWithValue("@Address", ticket.Address);
+                        cmd.Parameters.AddWithValue("@City", ticket.City);
+                        cmd.Parameters.AddWithValue("@Province", ticket.Province);
+                        cmd.Parameters.AddWithValue("@PostalCode", ticket.PostalCode);
+                        cmd.Parameters.AddWithValue("@Country", ticket.Country);
+
+                        await cmd.ExecuteNonQueryAsync();
+                        _logger.LogInformation("✅ Data inserted into database.");
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ Error inserting into database: {ex.Message}");
+                _logger.LogError($"🔍 Stack trace: {ex.StackTrace}");
             }
         }
     }
